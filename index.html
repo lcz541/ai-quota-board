@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Quota</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: #0c0e12; color: #f4f1ea; font: 16px/1.4 "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif; }
+    button, input, select { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    .board { position: fixed; z-index: 2; width: 20rem; border: 1px solid #2a3140; border-radius: 16px; background: #171b22; box-shadow: 0 12px 40px rgba(0,0,0,.35); }
+    .board.max { inset: 12px; width: auto; overflow: auto; }
+    .board.min { width: 20rem; }
+    .bar { display: flex; align-items: center; gap: 6px; padding: 8px; }
+    .grip { width: 28px; height: 28px; border: 0; background: transparent; color: #9aa3b2; }
+    h1 { margin: 0; flex: 1; font-size: 13px; letter-spacing: .08em; }
+    .icon { height: 36px; border: 0; border-radius: 999px; background: transparent; color: #f4f1ea; padding: 0 8px; }
+    .icon:hover, .logo:hover { background: #222833; }
+    .strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 0 8px 8px; }
+    .cell { border: 0; background: transparent; border-radius: 10px; padding: 6px 2px; text-align: left; }
+    .pct { font-variant-numeric: tabular-nums; font-weight: 650; }
+    .name, .left, .mute { color: #9aa3b2; font-size: 12px; }
+    .good { color: #7dcea0; } .warn { color: #e0b15a; } .hot { color: #e07a66; }
+    .logos { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 0 8px 8px; }
+    .logo { border: 0; background: transparent; border-radius: 12px; padding: 8px 4px; text-align: center; }
+    .logo.on { background: #222833; }
+    .ring { width: 56px; height: 56px; margin: 0 auto; display: grid; place-items: center; }
+    .ring svg { grid-area: 1 / 1; }
+    .mark { width: 32px; height: 32px; border-radius: 999px; display: grid; place-items: center; }
+    .mark svg { width: 18px; height: 18px; }
+    .weeks { padding: 0 12px 10px; font-size: 12px; }
+    .week { display: flex; justify-content: space-between; gap: 8px; font-variant-numeric: tabular-nums; }
+    form { border-top: 1px solid #2a3140; padding: 12px; display: grid; gap: 8px; }
+    .row { display: flex; justify-content: space-between; align-items: center; }
+    input[type="number"], select, input[type="time"] { background: #222833; border: 1px solid #2a3140; border-radius: 8px; padding: 8px; }
+    input[type="number"] { width: 4.5rem; text-align: right; }
+    input[type="range"] { width: 100%; }
+    .note { min-height: 1.2em; color: #9aa3b2; font-size: 12px; padding: 0 12px 8px; }
+  </style>
+</head>
+<body>
+  <section class="board" id="board" aria-label="Quota">
+    <div class="bar">
+      <button class="grip" id="grip" aria-label="Drag" title="Drag">⋮⋮</button>
+      <h1>QUOTA</h1>
+      <button class="icon" id="dictate" type="button">Dictate</button>
+      <button class="icon" id="min" type="button" aria-label="Minimize">–</button>
+      <button class="icon" id="max" type="button" aria-label="Maximize">□</button>
+    </div>
+    <div id="view"></div>
+    <p class="note" id="note"></p>
+  </section>
+  <script>
+    const IDS = ["grok", "grokbot", "muse", "gemini", "openai", "claude"];
+    const META = {
+      grok: { name: "Grok", spoken: ["grok.com", "grok chat", "grok"], color: "#f3efe6", ink: "#101318" },
+      grokbot: { name: "Grokbot", spoken: ["grok bot", "grokbot", "bot"], color: "#6ec4e0", ink: "#101318" },
+      muse: { name: "Muse", spoken: ["muse", "meta muse"], color: "#0866ff", ink: "#f4f1ea" },
+      gemini: { name: "Gemini", spoken: ["gemini", "google"], color: "#4285f4", ink: "#f4f1ea" },
+      openai: { name: "OpenAI", spoken: ["openai", "chat gpt", "chatgpt"], color: "#10a37f", ink: "#f4f1ea" },
+      claude: { name: "Claude", spoken: ["claude", "anthropic"], color: "#d97757", ink: "#101318" }
+    };
+    const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const KEY = "quota.share.v1";
+    const MARK = {
+      grok: '<path fill="currentColor" d="M6.2 5.2h2.3l3.5 5.1 3.5-5.1h2.3L13.2 12l4.6 6.8h-2.3l-3.5-5.2-3.5 5.2H6.2L10.8 12 6.2 5.2z"/>',
+      grokbot: '<rect x="3.5" y="3.5" width="17" height="17" rx="4" fill="none" stroke="currentColor" stroke-width="1.7"/><path fill="currentColor" d="M8 7.4h1.5l2.5 3.6 2.5-3.6H16L13.1 12 16 16.6h-1.5l-2.5-3.6-2.5 3.6H8L10.9 12 8 7.4z"/>',
+      muse: '<path fill="none" stroke="currentColor" stroke-width="1.8" d="M6.2 12c0-2.4 1.8-3.8 3.6-3.8 1.5 0 2.4.8 3.2 2 .8-1.2 1.7-2 3.2-2 1.8 0 3.6 1.4 3.6 3.8s-1.8 3.8-3.6 3.8c-1.5 0-2.4-.8-3.2-2-.8 1.2-1.7 2-3.2 2-1.8 0-3.6-1.4-3.6-3.8z"/>',
+      gemini: '<path fill="#4285f4" d="M12 2.2 13.5 9 12 10.4 10.5 9 12 2.2z"/><path fill="#ea4335" d="M21.8 12 15 10.5 13.6 12 15 13.5 21.8 12z"/><path fill="#fbbc04" d="M12 21.8 10.5 15 12 13.6 13.5 15 12 21.8z"/><path fill="#34a853" d="M2.2 12 9 13.5 10.4 12 9 10.5 2.2 12z"/>',
+      openai: '<g fill="none" stroke="currentColor" stroke-width="1.35"><circle cx="12" cy="5.1" r="3.15"/><circle cx="17.9" cy="8.5" r="3.15"/><circle cx="17.9" cy="15.5" r="3.15"/><circle cx="12" cy="18.9" r="3.15"/><circle cx="6.1" cy="15.5" r="3.15"/><circle cx="6.1" cy="8.5" r="3.15"/></g>',
+      claude: '<path fill="currentColor" d="M12 3.2 13.6 8.4 18.8 10 13.6 11.6 12 16.8 10.4 11.6 5.2 10 10.4 8.4 12 3.2z"/>'
+    };
+    const blank = () => ({ used: 0, resetDay: -1, resetTime: "00:00" });
+    let state = load();
+    let selected = "claude";
+    let live = null;
+    const board = document.getElementById("board");
+    const view = document.getElementById("view");
+    const note = document.getElementById("note");
+    function load() {
+      try {
+        const raw = JSON.parse(localStorage.getItem(KEY) || "null");
+        if (!raw) throw new Error("empty");
+        const meters = {};
+        for (const id of IDS) {
+          const m = raw.meters?.[id] || {};
+          const day = Number(m.resetDay);
+          meters[id] = { used: clamp(m.used), resetDay: Number.isInteger(day) && day >= 0 && day <= 6 ? day : -1, resetTime: /^\d{2}:\d{2}$/.test(m.resetTime || "") ? m.resetTime : "00:00" };
+        }
+        return { meters, mode: raw.mode === "min" || raw.mode === "max" ? raw.mode : "dock", x: Number.isFinite(raw.x) ? raw.x : null, y: Number.isFinite(raw.y) ? raw.y : null, weeks: Array.isArray(raw.weeks) ? raw.weeks.slice(0, 104) : [] };
+      } catch {
+        const meters = {};
+        for (const id of IDS) meters[id] = blank();
+        return { meters, mode: "dock", x: null, y: null, weeks: [] };
+      }
+    }
+    function clamp(n) { n = Math.round(Number(n)); return Number.isFinite(n) ? Math.min(100, Math.max(0, n)) : 0; }
+    function save() { localStorage.setItem(KEY, JSON.stringify(state)); }
+    function tone(used) { return used >= 85 ? "hot" : used >= 60 ? "warn" : "good"; }
+    function isoWeek(now) {
+      const d = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+      const day = d.getUTCDay() || 7;
+      d.setUTCDate(d.getUTCDate() + 4 - day);
+      const start = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+      const week = Math.ceil(((d.getTime() - start.getTime()) / 86400000 + 1) / 7);
+      return d.getUTCFullYear() + "-W" + String(week).padStart(2, "0");
+    }
+    function record() {
+      const week = isoWeek(new Date());
+      const meters = {};
+      for (const id of IDS) meters[id] = state.meters[id].used;
+      state.weeks = [{ week, meters }, ...state.weeks.filter((w) => w.week !== week)].slice(0, 104);
+    }
+    function nextReset(m, now) {
+      if (m.resetDay < 0) return null;
+      const [hh, mm] = m.resetTime.split(":").map(Number);
+      const cand = new Date(now);
+      cand.setHours(hh || 0, mm || 0, 0, 0);
+      cand.setDate(cand.getDate() + ((m.resetDay - cand.getDay() + 7) % 7));
+      if (cand.getTime() <= now.getTime()) cand.setDate(cand.getDate() + 7);
+      return cand;
+    }
+    function left(m, now) {
+      const end = nextReset(m, now);
+      if (!end) return "set day";
+      const hours = Math.max(0, (end - now) / 3600000);
+      if (hours < 36) return Math.max(1, Math.round(hours)) + "h";
+      const days = hours / 24;
+      return (days < 2 ? days.toFixed(1) : String(Math.round(days))) + "d";
+    }
+    function place() {
+      board.className = "board" + (state.mode === "max" ? " max" : state.mode === "min" ? " min" : "");
+      if (state.mode === "max") { board.style.left = ""; board.style.top = ""; return; }
+      const pos = live || (state.x == null ? { x: window.innerWidth - board.offsetWidth - 16, y: window.innerHeight - board.offsetHeight - 16 } : { x: state.x, y: state.y });
+      board.style.left = Math.max(8, pos.x) + "px";
+      board.style.top = Math.max(8, pos.y) + "px";
+    }
+    function ring(id, used) {
+      const c = 2 * Math.PI * 22;
+      const off = c * (1 - used / 100);
+      return '<svg width="56" height="56" viewBox="0 0 56 56"><circle cx="28" cy="28" r="22" fill="none" stroke="#2a3140" stroke-width="4"/><circle cx="28" cy="28" r="22" fill="none" stroke="' + META[id].color + '" stroke-width="4" stroke-dasharray="' + c.toFixed(2) + '" stroke-dashoffset="' + off.toFixed(2) + '" transform="rotate(-90 28 28)"/></svg>';
+    }
+    function render() {
+      const now = new Date();
+      if (state.mode === "min") {
+        view.innerHTML = '<div class="strip">' + IDS.map((id) => {
+          const m = state.meters[id];
+          return '<button class="cell" data-id="' + id + '" type="button"><span class="pct ' + tone(m.used) + '">' + m.used + '</span> <span class="name">' + META[id].name + '</span><div class="left">' + left(m, now) + '</div></button>';
+        }).join("") + '</div>';
+      } else {
+        view.innerHTML = '<div class="logos">' + IDS.map((id) => {
+          const m = state.meters[id];
+          return '<button class="logo' + (selected === id ? ' on' : '') + '" data-id="' + id + '" type="button"><span class="ring">' + ring(id, m.used) + '<span class="mark" style="background:' + META[id].color + ';color:' + META[id].ink + '"><svg viewBox="0 0 24 24" aria-hidden="true">' + MARK[id] + '</svg></span></span><div class="pct ' + tone(m.used) + '">' + m.used + '</div><div class="name">' + META[id].name + '</div><div class="left">' + left(m, now) + '</div></button>';
+        }).join("") + '</div>' + weeksHtml() + editor();
+      }
+      place();
+    }
+    function weeksHtml() {
+      if (!state.weeks.length) return '<div class="weeks mute">This week saves when you set a percent.</div>';
+      return '<div class="weeks"><div class="mute">Weeks</div>' + state.weeks.slice(0, 4).map((w) => '<div class="week"><span class="mute">' + w.week + '</span><span>' + IDS.map((id) => w.meters[id]).join(' ') + '</span></div>').join('') + '</div>';
+    }
+    function editor() {
+      const m = state.meters[selected];
+      return '<form><div class="row"><span>' + META[selected].name + ' used</span><input id="used" type="number" min="0" max="100" value="' + m.used + '" aria-label="Percent used"></div><input id="slider" type="range" min="0" max="100" value="' + m.used + '" aria-label="Usage slider"><div class="row"><label class="mute">Resets <select id="day"><option value="-1">Not set</option>' + DAYS.map((d, i) => '<option value="' + i + '"' + (m.resetDay === i ? ' selected' : '') + '>' + d + '</option>').join('') + '</select></label><label class="mute">Time <input id="time" type="time" value="' + m.resetTime + '"></label></div></form>';
+    }
+    function setUsed(id, used) { state.meters[id].used = clamp(used); record(); save(); render(); }
+    view.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('[data-id]');
+      if (!btn) return;
+      selected = btn.dataset.id;
+      if (state.mode === 'min') state.mode = 'dock';
+      save(); render();
+    });
+    view.addEventListener('input', (ev) => {
+      const t = ev.target;
+      if (t.id === 'used' || t.id === 'slider') setUsed(selected, t.value);
+      if (t.id === 'day') { state.meters[selected].resetDay = Number(t.value); record(); save(); render(); }
+      if (t.id === 'time') { state.meters[selected].resetTime = t.value; save(); }
+    });
+    document.getElementById('min').onclick = () => { state.mode = state.mode === 'min' ? 'dock' : 'min'; save(); render(); };
+    document.getElementById('max').onclick = () => { state.mode = state.mode === 'max' ? 'dock' : 'max'; save(); render(); };
+    document.getElementById('dictate').onclick = () => {
+      const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!Ctor) { note.textContent = 'Voice is not in this browser. Type the percent.'; if (state.mode === 'min') { state.mode = 'dock'; save(); render(); } return; }
+      const rec = new Ctor();
+      rec.lang = 'en-US';
+      rec.onresult = (ev) => {
+        const text = ev.results[0][0].transcript.toLowerCase();
+        note.textContent = text;
+        let hit = false;
+        for (const id of IDS) {
+          if (!META[id].spoken.some((s) => text.includes(s))) continue;
+          const n = text.match(/\d+/);
+          if (n) setUsed(id, n[0]);
+          const day = DAYS.findIndex((d) => text.includes(d.toLowerCase()));
+          if (day >= 0) state.meters[id].resetDay = day;
+          hit = true;
+        }
+        if (hit) { record(); save(); if (state.mode !== 'max') state.mode = 'dock'; render(); }
+      };
+      rec.onerror = () => { note.textContent = "Didn't catch that. Type the percent."; };
+      rec.start();
+      note.textContent = 'Listening…';
+    };
+    const grip = document.getElementById('grip');
+    grip.addEventListener('pointerdown', (ev) => {
+      if (state.mode === 'max') return;
+      grip.setPointerCapture(ev.pointerId);
+      const rect = board.getBoundingClientRect();
+      const startX = ev.clientX, startY = ev.clientY;
+      const move = (e) => { live = { x: rect.left + e.clientX - startX, y: rect.top + e.clientY - startY }; place(); };
+      const up = (e) => {
+        grip.removeEventListener('pointermove', move);
+        grip.removeEventListener('pointerup', up);
+        state.x = rect.left + e.clientX - startX;
+        state.y = rect.top + e.clientY - startY;
+        live = null; save(); place();
+      };
+      grip.addEventListener('pointermove', move);
+      grip.addEventListener('pointerup', up);
+    });
+    render();
+    setInterval(render, 60000);
+  </script>
+</body>
+</html>
